@@ -1,0 +1,16 @@
+# Configuration for go-test-coverage
+# See: https://github.com/vladopajic/go-test-coverage
+
+profile: coverage.out
+
+threshold:
+  # Total coverage threshold
+  total: 95
+
+  # Per-file thresholds (optional)
+  file: 0
+
+# Exclude patterns - these packages won't count toward coverage
+exclude:
+  # Main entry points and DI wiring
+  paths:
