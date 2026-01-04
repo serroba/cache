@@ -12,3 +12,4 @@ A Go library implementing caching using different algorithms.
 - LRU (Least Recently Used)
 - SLRU (Segmented LRU)
 - Clock (Second Chance)
+- FIFO (First In, First Out)

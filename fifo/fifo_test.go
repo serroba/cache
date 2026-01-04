@@ -1,29 +1,29 @@
-package clock_test
+package fifo_test
 
 import (
 	"fmt"
 	"sync"
 	"testing"
 
-	"github.com/serroba/cache/clock"
+	"github.com/serroba/cache/fifo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestClockCache_GetEmpty(t *testing.T) {
+func TestFIFOCache_GetEmpty(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](10)
 
 	v, ok := c.Get("missing")
 	assert.False(t, ok)
 	assert.Equal(t, 0, v)
 }
 
-func TestClockCache_SetAndGet(t *testing.T) {
+func TestFIFOCache_SetAndGet(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](10)
 	c.Set("foo", 42)
 
 	v, ok := c.Get("foo")
@@ -31,10 +31,10 @@ func TestClockCache_SetAndGet(t *testing.T) {
 	assert.Equal(t, 42, v)
 }
 
-func TestClockCache_UpdateExistingKey(t *testing.T) {
+func TestFIFOCache_UpdateExistingKey(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](10)
 	c.Set("key", 100)
 	c.Set("key", 200)
 
@@ -43,76 +43,62 @@ func TestClockCache_UpdateExistingKey(t *testing.T) {
 	assert.Equal(t, 200, v)
 }
 
-func TestClockCache_Eviction(t *testing.T) {
+func TestFIFOCache_EvictionOrder(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](3)
+	c := fifo.New[string, int](3)
 	c.Set("a", 1)
 	c.Set("b", 2)
 	c.Set("c", 3)
-	c.Set("d", 4) // should evict one item
 
-	assert.Equal(t, 3, c.Len())
+	// Access "a" - should NOT prevent eviction in FIFO
+	c.Get("a")
 
-	// At least d should exist
-	v, ok := c.Get("d")
+	// Add new item - should evict "a" (oldest)
+	c.Set("d", 4)
+
+	_, ok := c.Get("a")
+	assert.False(t, ok, "expected 'a' to be evicted (FIFO ignores access)")
+
+	// b, c, d should exist
+	v, ok := c.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, 2, v)
+
+	v, ok = c.Get("c")
+	require.True(t, ok)
+	assert.Equal(t, 3, v)
+
+	v, ok = c.Get("d")
 	require.True(t, ok)
 	assert.Equal(t, 4, v)
 }
 
-func TestClockCache_SecondChance(t *testing.T) {
+func TestFIFOCache_Peek(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](3)
+	c := fifo.New[string, int](10)
 	c.Set("a", 1)
-	c.Set("b", 2)
-	c.Set("c", 3)
 
-	// Access "a" to set its reference bit
-	c.Get("a")
-
-	// Add new item - "a" should get second chance
-	c.Set("d", 4)
-
-	// "a" should still exist (got second chance)
-	_, ok := c.Get("a")
-	assert.True(t, ok, "expected 'a' to survive due to second chance")
-}
-
-func TestClockCache_Peek(t *testing.T) {
-	t.Parallel()
-
-	c := clock.New[string, int](3)
-	c.Set("a", 1)
-	c.Set("b", 2)
-	c.Set("c", 3)
-
-	// Peek should not set reference bit
 	v, ok := c.Peek("a")
 	require.True(t, ok)
 	assert.Equal(t, 1, v)
-
-	// Add new item - "a" should be evicted (Peek didn't set reference bit)
-	c.Set("d", 4)
-
-	_, ok = c.Peek("a")
-	assert.False(t, ok, "expected 'a' to be evicted (Peek should not set reference bit)")
 }
 
-func TestClockCache_PeekNonExistent(t *testing.T) {
+func TestFIFOCache_PeekNonExistent(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](10)
 
 	v, ok := c.Peek("missing")
 	assert.False(t, ok)
 	assert.Equal(t, 0, v)
 }
 
-func TestClockCache_Delete(t *testing.T) {
+func TestFIFOCache_Delete(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](10)
 	c.Set("a", 1)
 	c.Set("b", 2)
 
@@ -122,25 +108,54 @@ func TestClockCache_Delete(t *testing.T) {
 	_, exists := c.Get("a")
 	assert.False(t, exists)
 
-	// "b" should still exist
 	v, exists := c.Get("b")
 	require.True(t, exists)
 	assert.Equal(t, 2, v)
 }
 
-func TestClockCache_DeleteNonExistent(t *testing.T) {
+func TestFIFOCache_DeleteNonExistent(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](10)
 
 	ok := c.Delete("missing")
 	assert.False(t, ok)
 }
 
-func TestClockCache_Len(t *testing.T) {
+func TestFIFOCache_DeleteAndEvict(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](10)
+	c := fifo.New[string, int](3)
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Delete "a" (oldest)
+	c.Delete("a")
+
+	// Add two more items
+	c.Set("d", 4)
+	c.Set("e", 5)
+
+	// "b" should now be evicted (it's the oldest remaining)
+	_, ok := c.Get("b")
+	assert.False(t, ok, "expected 'b' to be evicted")
+
+	// c, d, e should exist
+	_, ok = c.Get("c")
+	assert.True(t, ok)
+
+	_, ok = c.Get("d")
+	assert.True(t, ok)
+
+	_, ok = c.Get("e")
+	assert.True(t, ok)
+}
+
+func TestFIFOCache_Len(t *testing.T) {
+	t.Parallel()
+
+	c := fifo.New[string, int](10)
 
 	assert.Equal(t, 0, c.Len())
 
@@ -155,10 +170,10 @@ func TestClockCache_Len(t *testing.T) {
 	assert.Equal(t, 2, c.Len())
 }
 
-func TestClockCache_LenAtCapacity(t *testing.T) {
+func TestFIFOCache_LenAtCapacity(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](3)
+	c := fifo.New[string, int](3)
 	c.Set("a", 1)
 	c.Set("b", 2)
 	c.Set("c", 3)
@@ -169,10 +184,10 @@ func TestClockCache_LenAtCapacity(t *testing.T) {
 	assert.Equal(t, 3, c.Len())
 }
 
-func TestClockCache_CapacityOne(t *testing.T) {
+func TestFIFOCache_CapacityOne(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](1)
+	c := fifo.New[string, int](1)
 	c.Set("a", 1)
 
 	v, ok := c.Get("a")
@@ -190,10 +205,10 @@ func TestClockCache_CapacityOne(t *testing.T) {
 	assert.Equal(t, 2, v)
 }
 
-func TestClockCache_MultipleTypes(t *testing.T) {
+func TestFIFOCache_MultipleTypes(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[int, string](10)
+	c := fifo.New[int, string](10)
 	c.Set(1, "one")
 	c.Set(2, "two")
 
@@ -208,10 +223,10 @@ func TestClockCache_MultipleTypes(t *testing.T) {
 
 // Concurrency tests
 
-func TestClockCache_ConcurrentWrites(t *testing.T) {
+func TestFIFOCache_ConcurrentWrites(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[int, int](100)
+	c := fifo.New[int, int](100)
 
 	var wg sync.WaitGroup
 
@@ -230,19 +245,17 @@ func TestClockCache_ConcurrentWrites(t *testing.T) {
 	wg.Wait()
 }
 
-func TestClockCache_ConcurrentReadsAndWrites(t *testing.T) {
+func TestFIFOCache_ConcurrentReadsAndWrites(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](100)
+	c := fifo.New[string, int](100)
 
-	// Pre-populate
 	for i := range 50 {
 		c.Set(fmt.Sprintf("key%d", i), i)
 	}
 
 	var wg sync.WaitGroup
 
-	// Writers
 	for i := range 10 {
 		wg.Add(1)
 
@@ -255,7 +268,6 @@ func TestClockCache_ConcurrentReadsAndWrites(t *testing.T) {
 		}(i)
 	}
 
-	// Readers
 	for range 10 {
 		wg.Add(1)
 
@@ -271,36 +283,10 @@ func TestClockCache_ConcurrentReadsAndWrites(t *testing.T) {
 	wg.Wait()
 }
 
-func TestClockCache_ConcurrentPeek(t *testing.T) {
+func TestFIFOCache_ConcurrentDelete(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[int, int](100)
-
-	for i := range 100 {
-		c.Set(i, i)
-	}
-
-	var wg sync.WaitGroup
-
-	for range 20 {
-		wg.Add(1)
-
-		go func() {
-			defer wg.Done()
-
-			for j := range 100 {
-				c.Peek(j)
-			}
-		}()
-	}
-
-	wg.Wait()
-}
-
-func TestClockCache_ConcurrentDelete(t *testing.T) {
-	t.Parallel()
-
-	c := clock.New[int, int](100)
+	c := fifo.New[int, int](100)
 
 	for i := range 100 {
 		c.Set(i, i)
@@ -323,10 +309,10 @@ func TestClockCache_ConcurrentDelete(t *testing.T) {
 	wg.Wait()
 }
 
-func TestClockCache_ConcurrentLen(t *testing.T) {
+func TestFIFOCache_ConcurrentLen(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[int, int](100)
+	c := fifo.New[int, int](100)
 
 	var wg sync.WaitGroup
 
@@ -358,43 +344,55 @@ func TestClockCache_ConcurrentLen(t *testing.T) {
 	wg.Wait()
 }
 
-func TestClockCache_DeleteAndReuseSlot(t *testing.T) {
+func TestFIFOCache_DeleteMiddleItem(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](3)
+	c := fifo.New[string, int](5)
 	c.Set("a", 1)
 	c.Set("b", 2)
 	c.Set("c", 3)
-
-	// Delete an item to create an empty slot
-	c.Delete("b")
-
-	// Add a new item - should use the empty slot
 	c.Set("d", 4)
+	c.Set("e", 5)
 
-	assert.Equal(t, 3, c.Len())
+	// Delete middle item
+	ok := c.Delete("c")
+	assert.True(t, ok)
+	assert.Equal(t, 4, c.Len())
 
-	v, ok := c.Get("d")
+	// Add new item - should not evict since we have room
+	c.Set("f", 6)
+	assert.Equal(t, 5, c.Len())
+
+	// "a" should still exist as oldest
+	v, ok := c.Get("a")
 	require.True(t, ok)
-	assert.Equal(t, 4, v)
+	assert.Equal(t, 1, v)
 }
 
-func TestClockCache_EvictAfterDelete(t *testing.T) {
+func TestFIFOCache_DeleteHeadAndTail(t *testing.T) {
 	t.Parallel()
 
-	c := clock.New[string, int](3)
-	c.Set("a", 1)
+	c := fifo.New[string, int](3)
+	c.Set("a", 1) // oldest (tail)
 	c.Set("b", 2)
-	c.Set("c", 3)
+	c.Set("c", 3) // newest (head)
 
-	// Delete one item
+	// Delete oldest
 	c.Delete("a")
 	assert.Equal(t, 2, c.Len())
 
-	// Add two more items - second one should trigger eviction
-	c.Set("d", 4)
-	assert.Equal(t, 3, c.Len())
+	// Delete newest
+	c.Delete("c")
+	assert.Equal(t, 1, c.Len())
 
-	c.Set("e", 5)
-	assert.Equal(t, 3, c.Len())
+	// Only "b" should remain
+	_, ok := c.Get("a")
+	assert.False(t, ok)
+
+	_, ok = c.Get("c")
+	assert.False(t, ok)
+
+	v, ok := c.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, 2, v)
 }
