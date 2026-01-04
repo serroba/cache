@@ -312,3 +312,28 @@ func TestLRUCache_ConcurrentSameKey(t *testing.T) {
 		t.Error("expected 'shared' key to exist")
 	}
 }
+
+func TestLRUCache_GetUpdatesOrder(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Access "a" using Get to make it recently used
+	if v, ok := c.Get("a"); !ok || v != 1 {
+		t.Errorf("expected 'a' to exist with value 1, got %v", v)
+	}
+
+	// Add new item, should evict "b" (least recently used) not "a"
+	c.Set("d", 4)
+
+	if _, ok := c.Get("b"); ok {
+		t.Error("expected 'b' to be evicted")
+	}
+
+	if _, ok := c.Get("a"); !ok {
+		t.Error("expected 'a' to still exist after being accessed with Get")
+	}
+}

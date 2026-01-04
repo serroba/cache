@@ -72,8 +72,9 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if v, ok := c.items[key]; ok {
-		return v.value, ok
+	if n, ok := c.items[key]; ok {
+		c.moveToHead(n)
+		return n.value, ok
 	}
 
 	var v V
