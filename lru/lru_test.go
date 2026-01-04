@@ -155,6 +155,29 @@ func TestLRUCache_EvictionOrder(t *testing.T) {
 	}
 }
 
+func TestLRUCache_GetUpdatesRecency(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Access "a" via Get - should make it most recently used
+	c.Get("a")
+
+	// Add new item - should evict "b" (now the least recently used)
+	c.Set("d", 4)
+
+	if _, ok := c.Get("a"); !ok {
+		t.Error("expected 'a' to still exist after being accessed via Get")
+	}
+
+	if _, ok := c.Get("b"); ok {
+		t.Error("expected 'b' to be evicted (was least recently used)")
+	}
+}
+
 func TestLRUCache_CapacityOne(t *testing.T) {
 	t.Parallel()
 
