@@ -82,3 +82,40 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 
 	return v, false
 }
+
+// Peek returns the value for a key without updating its recency.
+func (c *Cache[K, V]) Peek(key K) (V, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if v, ok := c.items[key]; ok {
+		return v.value, ok
+	}
+
+	var v V
+
+	return v, false
+}
+
+// Delete removes a key from the cache. Returns true if the key existed.
+func (c *Cache[K, V]) Delete(key K) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if n, ok := c.items[key]; ok {
+		c.removeNode(n)
+		delete(c.items, key)
+
+		return true
+	}
+
+	return false
+}
+
+// Len returns the number of items in the cache.
+func (c *Cache[K, V]) Len() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	return len(c.items)
+}

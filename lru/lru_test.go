@@ -2,91 +2,33 @@ package lru_test
 
 import (
 	"fmt"
-	"reflect"
 	"sync"
 	"testing"
 
 	"github.com/serroba/cache/lru"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLRUCache_Get(t *testing.T) {
-	type args[K comparable] struct {
-		key K
-	}
+	t.Parallel()
 
-	type want[V any] struct {
-		value V
-		ok    bool
-	}
+	c := lru.New[string, int](5)
 
-	type testCase[K comparable, V any] struct {
-		name string
-		c    *lru.Cache[K, V]
-		args args[K]
-		want want[V]
-	}
-
-	tests := []testCase[string, int]{
-		{
-			name: "Test on empty cache",
-			c:    lru.New[string, int](5),
-			args: args[string]{key: "some"},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got, got1 := tt.c.Get(tt.args.key)
-			if !reflect.DeepEqual(got, tt.want.value) {
-				t.Errorf("Get() got = %v, want %v", got, tt.want)
-			}
-
-			if got1 != tt.want.ok {
-				t.Errorf("Get() got1 = %v, want %v", got1, tt.want.value)
-			}
-		})
-	}
+	got, ok := c.Get("some")
+	assert.False(t, ok)
+	assert.Equal(t, 0, got)
 }
 
 func TestLRUCache_Set(t *testing.T) {
-	type args[K comparable, V any] struct {
-		key   K
-		value V
-	}
+	t.Parallel()
 
-	type want[V any] struct {
-		value V
-		ok    bool
-	}
+	c := lru.New[string, int](5)
+	c.Set("foo", 42)
 
-	type testCase[K comparable, V any] struct {
-		name string
-		c    *lru.Cache[K, V]
-		args args[K, V]
-		want want[V]
-	}
-
-	tests := []testCase[string, int]{
-		{
-			name: "Set and retrieve value",
-			c:    lru.New[string, int](5),
-			args: args[string, int]{key: "foo", value: 42},
-			want: want[int]{value: 42, ok: true},
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			tt.c.Set(tt.args.key, tt.args.value)
-
-			got, got1 := tt.c.Get(tt.args.key)
-			if !reflect.DeepEqual(got, tt.want.value) {
-				t.Errorf("Set() got = %v, want %v", got, tt.want.value)
-			}
-
-			if got1 != tt.want.ok {
-				t.Errorf("Set() got1 = %v, want %v", got1, tt.want.ok)
-			}
-		})
-	}
+	got, ok := c.Get("foo")
+	require.True(t, ok)
+	assert.Equal(t, 42, got)
 }
 
 func TestLRUCache_UpdateExistingKey(t *testing.T) {
@@ -97,13 +39,8 @@ func TestLRUCache_UpdateExistingKey(t *testing.T) {
 	c.Set("key", 200)
 
 	got, ok := c.Get("key")
-	if !ok {
-		t.Error("expected key to exist")
-	}
-
-	if got != 200 {
-		t.Errorf("expected updated value 200, got %v", got)
-	}
+	require.True(t, ok)
+	assert.Equal(t, 200, got)
 }
 
 func TestLRUCache_Eviction(t *testing.T) {
@@ -115,21 +52,20 @@ func TestLRUCache_Eviction(t *testing.T) {
 	c.Set("c", 3)
 	c.Set("d", 4) // should evict "a"
 
-	if _, ok := c.Get("a"); ok {
-		t.Error("expected 'a' to be evicted")
-	}
+	_, ok := c.Get("a")
+	assert.False(t, ok, "expected 'a' to be evicted")
 
-	if v, ok := c.Get("b"); !ok || v != 2 {
-		t.Errorf("expected 'b' to exist with value 2, got %v", v)
-	}
+	v, ok := c.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, 2, v)
 
-	if v, ok := c.Get("c"); !ok || v != 3 {
-		t.Errorf("expected 'c' to exist with value 3, got %v", v)
-	}
+	v, ok = c.Get("c")
+	require.True(t, ok)
+	assert.Equal(t, 3, v)
 
-	if v, ok := c.Get("d"); !ok || v != 4 {
-		t.Errorf("expected 'd' to exist with value 4, got %v", v)
-	}
+	v, ok = c.Get("d")
+	require.True(t, ok)
+	assert.Equal(t, 4, v)
 }
 
 func TestLRUCache_EvictionOrder(t *testing.T) {
@@ -146,13 +82,11 @@ func TestLRUCache_EvictionOrder(t *testing.T) {
 	// Add new item, should evict "b" (least recently used)
 	c.Set("d", 4)
 
-	if _, ok := c.Get("b"); ok {
-		t.Error("expected 'b' to be evicted")
-	}
+	_, ok := c.Get("b")
+	assert.False(t, ok, "expected 'b' to be evicted")
 
-	if _, ok := c.Get("a"); !ok {
-		t.Error("expected 'a' to still exist after being accessed")
-	}
+	_, ok = c.Get("a")
+	assert.True(t, ok, "expected 'a' to still exist after being accessed")
 }
 
 func TestLRUCache_GetUpdatesRecency(t *testing.T) {
@@ -169,13 +103,11 @@ func TestLRUCache_GetUpdatesRecency(t *testing.T) {
 	// Add new item - should evict "b" (now the least recently used)
 	c.Set("d", 4)
 
-	if _, ok := c.Get("a"); !ok {
-		t.Error("expected 'a' to still exist after being accessed via Get")
-	}
+	_, ok := c.Get("a")
+	assert.True(t, ok, "expected 'a' to still exist after being accessed via Get")
 
-	if _, ok := c.Get("b"); ok {
-		t.Error("expected 'b' to be evicted (was least recently used)")
-	}
+	_, ok = c.Get("b")
+	assert.False(t, ok, "expected 'b' to be evicted (was least recently used)")
 }
 
 func TestLRUCache_CapacityOne(t *testing.T) {
@@ -185,13 +117,12 @@ func TestLRUCache_CapacityOne(t *testing.T) {
 	c.Set("a", 1)
 	c.Set("b", 2)
 
-	if _, ok := c.Get("a"); ok {
-		t.Error("expected 'a' to be evicted")
-	}
+	_, ok := c.Get("a")
+	assert.False(t, ok, "expected 'a' to be evicted")
 
-	if v, ok := c.Get("b"); !ok || v != 2 {
-		t.Errorf("expected 'b' to exist with value 2, got %v", v)
-	}
+	v, ok := c.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, 2, v)
 }
 
 func TestLRUCache_MultipleTypes(t *testing.T) {
@@ -202,17 +133,17 @@ func TestLRUCache_MultipleTypes(t *testing.T) {
 	c.Set(2, "two")
 	c.Set(3, "three")
 
-	if v, ok := c.Get(1); !ok || v != "one" {
-		t.Errorf("expected 'one', got %v", v)
-	}
+	v, ok := c.Get(1)
+	require.True(t, ok)
+	assert.Equal(t, "one", v)
 
-	if v, ok := c.Get(2); !ok || v != "two" {
-		t.Errorf("expected 'two', got %v", v)
-	}
+	v, ok = c.Get(2)
+	require.True(t, ok)
+	assert.Equal(t, "two", v)
 
-	if v, ok := c.Get(3); !ok || v != "three" {
-		t.Errorf("expected 'three', got %v", v)
-	}
+	v, ok = c.Get(3)
+	require.True(t, ok)
+	assert.Equal(t, "three", v)
 }
 
 func TestLRUCache_ConcurrentWrites(t *testing.T) {
@@ -330,8 +261,119 @@ func TestLRUCache_ConcurrentSameKey(t *testing.T) {
 
 	wg.Wait()
 
-	// Verify the key exists with some value
-	if _, ok := c.Get("shared"); !ok {
-		t.Error("expected 'shared' key to exist")
-	}
+	_, ok := c.Get("shared")
+	assert.True(t, ok, "expected 'shared' key to exist")
+}
+
+func TestLRUCache_Peek(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Peek "a" - should NOT update recency
+	v, ok := c.Peek("a")
+	require.True(t, ok)
+	assert.Equal(t, 1, v)
+
+	// Add new item - should evict "a" since Peek didn't update recency
+	c.Set("d", 4)
+
+	_, ok = c.Peek("a")
+	assert.False(t, ok, "expected 'a' to be evicted (Peek should not update recency)")
+}
+
+func TestLRUCache_PeekNonExistent(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+
+	v, ok := c.Peek("missing")
+	assert.False(t, ok)
+	assert.Equal(t, 0, v)
+}
+
+func TestLRUCache_Delete(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+	c.Set("a", 1)
+	c.Set("b", 2)
+
+	// Delete existing key
+	ok := c.Delete("a")
+	assert.True(t, ok, "Delete() should return true for existing key")
+
+	_, exists := c.Get("a")
+	assert.False(t, exists, "expected 'a' to be deleted")
+
+	// Verify "b" still exists
+	v, exists := c.Get("b")
+	require.True(t, exists)
+	assert.Equal(t, 2, v)
+}
+
+func TestLRUCache_DeleteNonExistent(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+	c.Set("a", 1)
+
+	ok := c.Delete("missing")
+	assert.False(t, ok, "Delete() should return false for non-existent key")
+
+	// Verify cache is unchanged
+	v, exists := c.Get("a")
+	require.True(t, exists)
+	assert.Equal(t, 1, v)
+}
+
+func TestLRUCache_DeleteUpdatesLen(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](5)
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	assert.Equal(t, 3, c.Len())
+
+	c.Delete("b")
+
+	assert.Equal(t, 2, c.Len())
+}
+
+func TestLRUCache_Len(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](5)
+
+	assert.Equal(t, 0, c.Len())
+
+	c.Set("a", 1)
+	assert.Equal(t, 1, c.Len())
+
+	c.Set("b", 2)
+	c.Set("c", 3)
+	assert.Equal(t, 3, c.Len())
+
+	// Update existing key - length should stay same
+	c.Set("a", 100)
+	assert.Equal(t, 3, c.Len())
+}
+
+func TestLRUCache_LenWithEviction(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](2)
+	c.Set("a", 1)
+	c.Set("b", 2)
+
+	assert.Equal(t, 2, c.Len())
+
+	c.Set("c", 3) // should evict "a"
+
+	assert.Equal(t, 2, c.Len())
 }
