@@ -413,3 +413,79 @@ func TestSLRUCache_ConcurrentLen(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestSLRUCache_DemoteLRU(t *testing.T) {
+	t.Parallel()
+
+	// Create cache with small capacity to trigger demotion
+	// Capacity 5 with default 80% protected = 4 protected, 1 probation
+	c := slru.New[string, int](5)
+
+	// Add items to probation
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+	c.Set("d", 4)
+	c.Set("e", 5)
+
+	// Promote all items to protected by accessing them
+	c.Get("a") // protected: [a], probation: [b,c,d,e] - but probation cap is 1, so evicts
+	c.Get("b") // protected: [b,a], probation grows/evicts
+	c.Get("c") // protected: [c,b,a]
+	c.Get("d") // protected: [d,c,b,a] - now protected is full (cap=4)
+
+	// Add a new item to probation
+	c.Set("f", 6)
+
+	// Now promote "f" - this should trigger demoteLRU
+	// "a" is LRU in protected and should be demoted to probation
+	c.Get("f") // promotes f, demotes a to probation
+
+	// Verify "f" is accessible (now in protected)
+	v, ok := c.Get("f")
+	require.True(t, ok)
+	assert.Equal(t, 6, v)
+
+	// "a" should still be accessible (demoted to probation)
+	v, ok = c.Get("a")
+	require.True(t, ok)
+	assert.Equal(t, 1, v)
+}
+
+func TestSLRUCache_DemoteTriggersProbationEviction(t *testing.T) {
+	t.Parallel()
+
+	// Create cache where demotion will cause probation overflow
+	// Capacity 3 with 66% protected = 2 protected, 1 probation
+	c := slru.NewWithRatio[string, int](3, 66)
+
+	// Fill the cache
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Promote a and b to protected
+	c.Get("a") // protected: [a], probation: [b,c]
+	c.Get("b") // protected: [b,a] (full), probation has c
+
+	// Add new item (goes to probation, may evict c)
+	c.Set("d", 4)
+
+	// Promote d - this should:
+	// 1. Move d from probation to protected
+	// 2. Demote a (LRU in protected) to probation
+	// 3. If probation is full, evict from probation
+	c.Get("d")
+
+	// d and b should exist (in protected)
+	v, ok := c.Get("d")
+	require.True(t, ok)
+	assert.Equal(t, 4, v)
+
+	v, ok = c.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, 2, v)
+
+	// Total items should not exceed capacity
+	assert.LessOrEqual(t, c.Len(), 3)
+}
