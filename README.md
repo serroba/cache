@@ -10,3 +10,5 @@ A Go library implementing caching using different algorithms.
 ## Algorithms
 
 - LRU (Least Recently Used)
+- SLRU (Segmented LRU)
+- Clock (Second Chance)
