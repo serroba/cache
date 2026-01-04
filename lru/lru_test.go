@@ -377,3 +377,285 @@ func TestLRUCache_LenWithEviction(t *testing.T) {
 
 	assert.Equal(t, 2, c.Len())
 }
+
+func TestLRUCache_ConcurrentDeletes(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](1000)
+
+	// Pre-populate
+	for i := range 1000 {
+		c.Set(i, i)
+	}
+
+	var wg sync.WaitGroup
+
+	// Concurrent deletions
+	for i := range 100 {
+		wg.Add(1)
+
+		go func(start int) {
+			defer wg.Done()
+
+			for j := range 10 {
+				c.Delete(start*10 + j)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentDeletesAndReads(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](100)
+
+	// Pre-populate
+	for i := range 100 {
+		c.Set(i, i)
+	}
+
+	var wg sync.WaitGroup
+
+	// Deleters
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 10 {
+				c.Delete(id*10 + j)
+			}
+		}(i)
+	}
+
+	// Readers
+	for range 10 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Get(j)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentDeletesAndWrites(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](100)
+
+	var wg sync.WaitGroup
+
+	// Writers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Set(id*100+j, j)
+			}
+		}(i)
+	}
+
+	// Deleters
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Delete(id*100 + j)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentPeek(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](100)
+
+	// Pre-populate
+	for i := range 100 {
+		c.Set(i, i)
+	}
+
+	var wg sync.WaitGroup
+
+	// Concurrent peeks
+	for range 100 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Peek(j)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentPeekAndWrites(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](100)
+
+	var wg sync.WaitGroup
+
+	// Writers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Set(fmt.Sprintf("key%d-%d", id, j), j)
+			}
+		}(i)
+	}
+
+	// Peekers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Peek(fmt.Sprintf("key%d-%d", id, j))
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentAllOperations(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](50)
+
+	var wg sync.WaitGroup
+
+	// Writers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 50 {
+				c.Set(id*50+j, j)
+			}
+		}(i)
+	}
+
+	// Readers (Get)
+	for range 10 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Get(j)
+			}
+		}()
+	}
+
+	// Peekers
+	for range 10 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Peek(j)
+			}
+		}()
+	}
+
+	// Deleters
+	for range 10 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Delete(j)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentLen(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](100)
+
+	var wg sync.WaitGroup
+
+	// Writers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 50 {
+				c.Set(id*50+j, j)
+				c.Len() // concurrent Len calls while writing
+			}
+		}(i)
+	}
+
+	// Deleters
+	for range 10 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for j := range 50 {
+				c.Delete(j)
+				c.Len() // concurrent Len calls while deleting
+			}
+		}()
+	}
+
+	// Len readers
+	for range 10 {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range 100 {
+				c.Len()
+			}
+		}()
+	}
+
+	wg.Wait()
+}
