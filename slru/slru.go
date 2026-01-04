@@ -1,19 +1,36 @@
+// Package slru provides a thread-safe Segmented LRU cache implementation.
 package slru
 
-import (
-	"sync"
+import "sync"
 
-	"github.com/serroba/cache/lru"
+type segment uint8
+
+const (
+	probation segment = iota
+	protected
 )
+
+type node[K comparable, V any] struct {
+	key        K
+	value      V
+	segment    segment
+	prev, next *node[K, V]
+}
 
 // Cache implements a Segmented LRU cache.
 // Items enter through the probation segment and are promoted to the protected
 // segment on subsequent access. This helps protect frequently accessed items
 // from being evicted by a burst of new entries.
 type Cache[K comparable, V any] struct {
-	mu               sync.Mutex
-	probationSegment *lru.Cache[K, V]
-	protectedSegment *lru.Cache[K, V]
+	mu sync.Mutex
+
+	items map[K]*node[K, V]
+
+	probationHead, probationTail *node[K, V]
+	protectedHead, protectedTail *node[K, V]
+
+	probationCap, protectedCap uint64
+	probationLen, protectedLen uint64
 }
 
 // New creates a new SLRU cache with the given capacity.
@@ -42,9 +59,24 @@ func NewWithRatio[K comparable, V any](capacity uint64, protectedPercent uint8) 
 		probationCap = 1
 	}
 
+	probationHead := &node[K, V]{segment: probation}
+	probationTail := &node[K, V]{segment: probation}
+	probationHead.next = probationTail
+	probationTail.prev = probationHead
+
+	protectedHead := &node[K, V]{segment: protected}
+	protectedTail := &node[K, V]{segment: protected}
+	protectedHead.next = protectedTail
+	protectedTail.prev = protectedHead
+
 	return &Cache[K, V]{
-		probationSegment: lru.New[K, V](probationCap),
-		protectedSegment: lru.New[K, V](protectedCap),
+		items:         make(map[K]*node[K, V]),
+		probationHead: probationHead,
+		probationTail: probationTail,
+		protectedHead: protectedHead,
+		protectedTail: protectedTail,
+		probationCap:  probationCap,
+		protectedCap:  protectedCap,
 	}
 }
 
@@ -55,22 +87,21 @@ func (c *Cache[K, V]) Set(key K, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check if key exists in protected segment
-	if _, ok := c.protectedSegment.Peek(key); ok {
-		c.protectedSegment.Set(key, value)
+	if n, ok := c.items[key]; ok {
+		n.value = value
+		c.moveToHead(n)
 
 		return
 	}
 
-	// Check if key exists in probation segment
-	if _, ok := c.probationSegment.Peek(key); ok {
-		c.probationSegment.Set(key, value)
+	n := &node[K, V]{key: key, value: value, segment: probation}
+	c.items[key] = n
+	c.addToHead(n, probation)
+	c.probationLen++
 
-		return
+	if c.probationLen > c.probationCap {
+		c.evictFrom(probation)
 	}
-
-	// New key goes to probation
-	c.probationSegment.Set(key, value)
 }
 
 // Get retrieves a value from the cache.
@@ -79,22 +110,20 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Check protected segment first (hot items)
-	if v, ok := c.protectedSegment.Get(key); ok {
-		return v, true
+	n, ok := c.items[key]
+	if !ok {
+		var zero V
+
+		return zero, false
 	}
 
-	// Check probation segment - if found, promote to protected
-	if v, ok := c.probationSegment.Peek(key); ok {
-		c.probationSegment.Delete(key)
-		c.protectedSegment.Set(key, v)
-
-		return v, true
+	if n.segment == probation {
+		c.promote(n)
+	} else {
+		c.moveToHead(n)
 	}
 
-	var zero V
-
-	return zero, false
+	return n.value, true
 }
 
 // Peek returns the value for a key without promoting it.
@@ -102,12 +131,8 @@ func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if v, ok := c.protectedSegment.Peek(key); ok {
-		return v, true
-	}
-
-	if v, ok := c.probationSegment.Peek(key); ok {
-		return v, true
+	if n, ok := c.items[key]; ok {
+		return n.value, true
 	}
 
 	var zero V
@@ -120,11 +145,22 @@ func (c *Cache[K, V]) Delete(key K) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.protectedSegment.Delete(key) {
-		return true
+	n, ok := c.items[key]
+	if !ok {
+		return false
 	}
 
-	return c.probationSegment.Delete(key)
+	c.removeNode(n)
+
+	if n.segment == probation {
+		c.probationLen--
+	} else {
+		c.protectedLen--
+	}
+
+	delete(c.items, key)
+
+	return true
 }
 
 // Len returns the total number of items in both segments.
@@ -132,5 +168,97 @@ func (c *Cache[K, V]) Len() int {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	return c.protectedSegment.Len() + c.probationSegment.Len()
+	return len(c.items)
+}
+
+// promote moves a node from probation to protected segment.
+func (c *Cache[K, V]) promote(n *node[K, V]) {
+	c.removeNode(n)
+	c.probationLen--
+
+	n.segment = protected
+	c.addToHead(n, protected)
+	c.protectedLen++
+
+	if c.protectedLen > c.protectedCap {
+		c.demoteLRU()
+	}
+}
+
+// demoteLRU moves the LRU item from protected back to probation.
+func (c *Cache[K, V]) demoteLRU() {
+	lru := c.protectedTail.prev
+	if lru == c.protectedHead {
+		return
+	}
+
+	c.removeNode(lru)
+	c.protectedLen--
+
+	lru.segment = probation
+	c.addToHead(lru, probation)
+	c.probationLen++
+
+	if c.probationLen > c.probationCap {
+		c.evictFrom(probation)
+	}
+}
+
+// evictFrom removes the LRU item from the specified segment.
+func (c *Cache[K, V]) evictFrom(seg segment) {
+	var tail *node[K, V]
+
+	if seg == probation {
+		tail = c.probationTail
+	} else {
+		tail = c.protectedTail
+	}
+
+	lru := tail.prev
+
+	if seg == probation && lru == c.probationHead {
+		return
+	}
+
+	if seg == protected && lru == c.protectedHead {
+		return
+	}
+
+	c.removeNode(lru)
+
+	if seg == probation {
+		c.probationLen--
+	} else {
+		c.protectedLen--
+	}
+
+	delete(c.items, lru.key)
+}
+
+// removeNode removes a node from its current linked list.
+func (c *Cache[K, V]) removeNode(n *node[K, V]) {
+	n.prev.next = n.next
+	n.next.prev = n.prev
+}
+
+// addToHead adds a node to the head of the specified segment's list.
+func (c *Cache[K, V]) addToHead(n *node[K, V], seg segment) {
+	var head *node[K, V]
+
+	if seg == probation {
+		head = c.probationHead
+	} else {
+		head = c.protectedHead
+	}
+
+	n.next = head.next
+	n.prev = head
+	head.next.prev = n
+	head.next = n
+}
+
+// moveToHead moves an existing node to the head of its segment's list.
+func (c *Cache[K, V]) moveToHead(n *node[K, V]) {
+	c.removeNode(n)
+	c.addToHead(n, n.segment)
 }
