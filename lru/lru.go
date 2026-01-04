@@ -7,16 +7,17 @@ type node[K comparable, V any] struct {
 }
 
 type Cache[K comparable, V any] struct {
-	capacity   uint32
+	capacity   uint64
 	items      map[K]*node[K, V]
 	head, tail *node[K, V]
 }
 
-func New[K comparable, V any](capacity uint32) *Cache[K, V] {
+func New[K comparable, V any](capacity uint64) *Cache[K, V] {
 	head := &node[K, V]{}
 	tail := &node[K, V]{}
 	head.next = tail
 	tail.prev = head
+
 	return &Cache[K, V]{
 		capacity: capacity,
 		items:    make(map[K]*node[K, V]),
@@ -34,7 +35,8 @@ func (c *Cache[K, V]) Set(key K, value V) {
 		n := &node[K, V]{key: key, value: value}
 		c.items[key] = n
 		c.addNodeToHead(n)
-		if uint32(len(c.items)) > c.capacity {
+
+		if uint64(len(c.items)) > c.capacity {
 			lru := c.tail.prev
 			c.removeNode(lru)
 			delete(c.items, lru.key)

@@ -96,6 +96,7 @@ func TestLRUCache_UpdateExistingKey(t *testing.T) {
 	if !ok {
 		t.Error("expected key to exist")
 	}
+
 	if got != 200 {
 		t.Errorf("expected updated value 200, got %v", got)
 	}
@@ -115,9 +116,11 @@ func TestLRUCache_Eviction(t *testing.T) {
 	if v, ok := c.Get("b"); !ok || v != 2 {
 		t.Errorf("expected 'b' to exist with value 2, got %v", v)
 	}
+
 	if v, ok := c.Get("c"); !ok || v != 3 {
 		t.Errorf("expected 'c' to exist with value 3, got %v", v)
 	}
+
 	if v, ok := c.Get("d"); !ok || v != 4 {
 		t.Errorf("expected 'd' to exist with value 4, got %v", v)
 	}
@@ -138,6 +141,7 @@ func TestLRUCache_EvictionOrder(t *testing.T) {
 	if _, ok := c.Get("b"); ok {
 		t.Error("expected 'b' to be evicted")
 	}
+
 	if _, ok := c.Get("a"); !ok {
 		t.Error("expected 'a' to still exist after being accessed")
 	}
@@ -151,6 +155,7 @@ func TestLRUCache_CapacityOne(t *testing.T) {
 	if _, ok := c.Get("a"); ok {
 		t.Error("expected 'a' to be evicted")
 	}
+
 	if v, ok := c.Get("b"); !ok || v != 2 {
 		t.Errorf("expected 'b' to exist with value 2, got %v", v)
 	}
@@ -165,9 +170,11 @@ func TestLRUCache_MultipleTypes(t *testing.T) {
 	if v, ok := c.Get(1); !ok || v != "one" {
 		t.Errorf("expected 'one', got %v", v)
 	}
+
 	if v, ok := c.Get(2); !ok || v != "two" {
 		t.Errorf("expected 'two', got %v", v)
 	}
+
 	if v, ok := c.Get(3); !ok || v != "three" {
 		t.Errorf("expected 'three', got %v", v)
 	}
