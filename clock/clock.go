@@ -1,4 +1,38 @@
 // Package clock provides a thread-safe Clock (Second Chance) cache implementation.
+//
+// # When to Use Clock
+//
+// Use Clock when you want LRU-like behavior with simpler implementation and
+// potentially better performance characteristics. Clock is ideal for:
+//   - Memory-constrained environments where simpler data structures help
+//   - Workloads where approximate LRU is sufficient
+//   - Systems where you want second-chance behavior for recently accessed items
+//
+// # How Clock Works
+//
+// Clock uses a circular buffer with a "hand" pointer and reference bits:
+//  1. Each item has a reference bit, set to true when accessed
+//  2. On eviction, the hand sweeps the buffer looking for items to evict
+//  3. If an item's reference bit is true, it gets a "second chance": bit cleared, hand moves on
+//  4. If an item's reference bit is false, it's evicted
+//
+// This approximates LRU: frequently accessed items keep getting their bit set,
+// surviving eviction sweeps.
+//
+// # Thread Safety
+//
+// All methods are safe for concurrent use. The cache uses a mutex internally.
+//
+// # Performance
+//
+// All operations (Get, Set, Delete, Peek, Len) are O(1) amortized.
+//
+// # Example Usage
+//
+//	cache := clock.New[string, int](100)
+//	cache.Set("key", 42)
+//	cache.Get("key")        // Sets reference bit
+//	// On eviction, "key" gets a second chance
 package clock
 
 import "sync"
@@ -10,37 +44,53 @@ type entry[K comparable, V any] struct {
 }
 
 // Cache implements a Clock cache (also known as Second Chance).
+//
 // It approximates LRU with O(1) access time by using a circular buffer
-// and a reference bit instead of reordering on every access.
+// and a reference bit instead of reordering on every access. When an item
+// is accessed, its reference bit is set. During eviction, items with set
+// bits get a "second chance" (bit cleared), while items with cleared bits
+// are evicted.
+//
+// The zero value is not usable; create instances with [New].
 type Cache[K comparable, V any] struct {
 	mu       sync.Mutex
-	items    map[K]int // key -> index in ring
+	items    map[K]uint64
 	ring     []*entry[K, V]
-	hand     int // clock hand position
-	capacity int
-	size     int
+	hand     uint64
+	capacity uint64
+	size     uint64
 }
 
-// New creates a new Clock cache with the given capacity.
+// New creates a new Clock cache with the specified maximum capacity.
+//
+// The capacity determines how many key-value pairs the cache can hold.
+// When this limit is exceeded, items are evicted using the clock algorithm.
+//
+// Example:
+//
+//	cache := clock.New[string, *Session](1000)
 func New[K comparable, V any](capacity uint64) *Cache[K, V] {
-	c := capacity
-	if c > uint64(maxInt) {
-		c = uint64(maxInt)
-	}
-
-	size := int(c) //nolint:gosec // bounds checked above
-
 	return &Cache[K, V]{
-		items:    make(map[K]int),
-		ring:     make([]*entry[K, V], size),
-		capacity: size,
+		items:    make(map[K]uint64),
+		ring:     make([]*entry[K, V], capacity),
+		capacity: capacity,
 	}
 }
 
-const maxInt = int(^uint(0) >> 1)
-
-// Set adds or updates a value in the cache.
-// If the cache is full, it evicts an item using the clock algorithm.
+// Set adds or updates a key-value pair in the cache.
+//
+// Behavior:
+//   - If the key exists: updates the value and sets the reference bit (second chance)
+//   - If the key is new and cache is full: evicts an item using clock algorithm first
+//   - If the key is new and cache has space: simply adds the item
+//
+// New items start with their reference bit cleared, making them eligible for
+// eviction until they are accessed via [Cache.Get].
+//
+// Example:
+//
+//	cache.Set("config", configData)
+//	cache.Set("config", newConfig)  // Updates and sets reference bit
 func (c *Cache[K, V]) Set(key K, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -69,8 +119,20 @@ func (c *Cache[K, V]) Set(key K, value V) {
 	c.size++
 }
 
-// Get retrieves a value from the cache.
-// Accessing a key sets its reference bit.
+// Get retrieves a value from the cache and sets its reference bit.
+//
+// Returns:
+//   - (value, true) if the key exists
+//   - (zero value, false) if the key does not exist
+//
+// Setting the reference bit gives the item a "second chance" during eviction.
+// Use [Cache.Peek] if you need to check a value without affecting eviction.
+//
+// Example:
+//
+//	if session, ok := cache.Get("session:abc"); ok {
+//	    // session found, now protected from immediate eviction
+//	}
 func (c *Cache[K, V]) Get(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -88,6 +150,21 @@ func (c *Cache[K, V]) Get(key K) (V, bool) {
 }
 
 // Peek retrieves a value without setting the reference bit.
+//
+// Returns:
+//   - (value, true) if the key exists
+//   - (zero value, false) if the key does not exist
+//
+// Unlike [Cache.Get], this does not give the item a "second chance" during
+// eviction. Use Peek when you need to check a value without affecting the
+// cache's eviction behavior.
+//
+// Example:
+//
+//	// Check without protecting from eviction
+//	if _, ok := cache.Peek("maybe-expired"); ok {
+//	    // Item exists but won't get second chance
+//	}
 func (c *Cache[K, V]) Peek(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -103,6 +180,13 @@ func (c *Cache[K, V]) Peek(key K) (V, bool) {
 }
 
 // Delete removes a key from the cache.
+//
+// Returns true if the key existed and was removed, false if the key was not found.
+// The slot in the ring buffer is marked as empty and can be reused.
+//
+// Example:
+//
+//	cache.Delete("invalidated-token")
 func (c *Cache[K, V]) Delete(key K) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -119,8 +203,14 @@ func (c *Cache[K, V]) Delete(key K) bool {
 	return true
 }
 
-// Len returns the number of items in the cache.
-func (c *Cache[K, V]) Len() int {
+// Len returns the current number of items in the cache.
+//
+// This value is always <= the capacity specified in [New].
+//
+// Example:
+//
+//	fmt.Printf("Cache contains %d items\n", cache.Len())
+func (c *Cache[K, V]) Len() uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -128,16 +218,11 @@ func (c *Cache[K, V]) Len() int {
 }
 
 // evict removes an item using the clock algorithm.
-// Must be called with lock held.
+// Must be called with lock held and when size >= capacity (cache is full).
+// Since the cache is full, all slots are occupied; no nil checks needed.
 func (c *Cache[K, V]) evict() {
 	for {
 		e := c.ring[c.hand]
-
-		if e == nil {
-			c.advanceHand()
-
-			continue
-		}
 
 		if e.referenced {
 			// Give second chance
@@ -159,9 +244,8 @@ func (c *Cache[K, V]) evict() {
 
 // findEmptySlot finds an empty slot in the ring.
 // Must be called with lock held and when there's guaranteed to be an empty slot.
-func (c *Cache[K, V]) findEmptySlot() int {
-	start := c.hand
-
+// This is always called after evict() has freed a slot, so an empty slot exists.
+func (c *Cache[K, V]) findEmptySlot() uint64 {
 	for {
 		if c.ring[c.hand] == nil {
 			idx := c.hand
@@ -171,11 +255,6 @@ func (c *Cache[K, V]) findEmptySlot() int {
 		}
 
 		c.advanceHand()
-
-		if c.hand == start {
-			// Should never happen if called correctly
-			return 0
-		}
 	}
 }
 

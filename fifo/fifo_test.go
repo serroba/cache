@@ -396,3 +396,28 @@ func TestFIFOCache_DeleteHeadAndTail(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, 2, v)
 }
+
+func TestFIFOCache_ZeroCapacity(t *testing.T) {
+	t.Parallel()
+
+	// Edge case: capacity 0 means every Set triggers evict on empty list
+	c := fifo.New[string, int](0)
+
+	// First Set on zero capacity - evict finds empty list and returns early
+	c.Set("a", 1)
+	// Item is stored (evict can't evict from empty list)
+	assert.Equal(t, 1, c.Len())
+
+	// Second Set - now evict finds the item and evicts it
+	c.Set("b", 2)
+	// Still only 1 item (evicted a, then stored b)
+	assert.Equal(t, 1, c.Len())
+
+	// "b" should exist, "a" should be evicted
+	_, ok := c.Get("a")
+	assert.False(t, ok)
+
+	v, ok := c.Get("b")
+	require.True(t, ok)
+	assert.Equal(t, 2, v)
+}

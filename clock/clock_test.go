@@ -52,7 +52,7 @@ func TestClockCache_Eviction(t *testing.T) {
 	c.Set("c", 3)
 	c.Set("d", 4) // should evict one item
 
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 
 	// At least d should exist
 	v, ok := c.Get("d")
@@ -142,17 +142,17 @@ func TestClockCache_Len(t *testing.T) {
 
 	c := clock.New[string, int](10)
 
-	assert.Equal(t, 0, c.Len())
+	assert.Equal(t, uint64(0), c.Len())
 
 	c.Set("a", 1)
-	assert.Equal(t, 1, c.Len())
+	assert.Equal(t, uint64(1), c.Len())
 
 	c.Set("b", 2)
 	c.Set("c", 3)
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 
 	c.Delete("b")
-	assert.Equal(t, 2, c.Len())
+	assert.Equal(t, uint64(2), c.Len())
 }
 
 func TestClockCache_LenAtCapacity(t *testing.T) {
@@ -163,10 +163,10 @@ func TestClockCache_LenAtCapacity(t *testing.T) {
 	c.Set("b", 2)
 	c.Set("c", 3)
 
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 
 	c.Set("d", 4)
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 }
 
 func TestClockCache_CapacityOne(t *testing.T) {
@@ -180,7 +180,7 @@ func TestClockCache_CapacityOne(t *testing.T) {
 	assert.Equal(t, 1, v)
 
 	c.Set("b", 2)
-	assert.Equal(t, 1, c.Len())
+	assert.Equal(t, uint64(1), c.Len())
 
 	_, ok = c.Get("a")
 	assert.False(t, ok)
@@ -372,7 +372,7 @@ func TestClockCache_DeleteAndReuseSlot(t *testing.T) {
 	// Add a new item - should use the empty slot
 	c.Set("d", 4)
 
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 
 	v, ok := c.Get("d")
 	require.True(t, ok)
@@ -389,12 +389,13 @@ func TestClockCache_EvictAfterDelete(t *testing.T) {
 
 	// Delete one item
 	c.Delete("a")
-	assert.Equal(t, 2, c.Len())
+	assert.Equal(t, uint64(2), c.Len())
 
 	// Add two more items - second one should trigger eviction
 	c.Set("d", 4)
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 
 	c.Set("e", 5)
-	assert.Equal(t, 3, c.Len())
+	assert.Equal(t, uint64(3), c.Len())
 }
+
