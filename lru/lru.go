@@ -1,5 +1,7 @@
 package lru
 
+import "sync"
+
 type node[K comparable, V any] struct {
 	key        K
 	value      V
@@ -7,6 +9,8 @@ type node[K comparable, V any] struct {
 }
 
 type Cache[K comparable, V any] struct {
+	mu sync.Mutex
+
 	capacity   uint64
 	items      map[K]*node[K, V]
 	head, tail *node[K, V]
@@ -27,6 +31,9 @@ func New[K comparable, V any](capacity uint64) *Cache[K, V] {
 }
 
 func (c *Cache[K, V]) Set(key K, value V) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if n, ok := c.items[key]; ok {
 		n.value = value
 		c.items[key] = n
@@ -62,7 +69,12 @@ func (c *Cache[K, V]) addNodeToHead(node *node[K, V]) {
 }
 
 func (c *Cache[K, V]) Get(key K) (V, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	if v, ok := c.items[key]; ok {
+		c.moveToHead(v)
+
 		return v.value, ok
 	}
 

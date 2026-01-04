@@ -1,7 +1,9 @@
 package lru_test
 
 import (
+	"fmt"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/serroba/cache/lru"
@@ -88,6 +90,8 @@ func TestLRUCache_Set(t *testing.T) {
 }
 
 func TestLRUCache_UpdateExistingKey(t *testing.T) {
+	t.Parallel()
+
 	c := lru.New[string, int](5)
 	c.Set("key", 100)
 	c.Set("key", 200)
@@ -103,6 +107,8 @@ func TestLRUCache_UpdateExistingKey(t *testing.T) {
 }
 
 func TestLRUCache_Eviction(t *testing.T) {
+	t.Parallel()
+
 	c := lru.New[string, int](3)
 	c.Set("a", 1)
 	c.Set("b", 2)
@@ -127,6 +133,8 @@ func TestLRUCache_Eviction(t *testing.T) {
 }
 
 func TestLRUCache_EvictionOrder(t *testing.T) {
+	t.Parallel()
+
 	c := lru.New[string, int](3)
 	c.Set("a", 1)
 	c.Set("b", 2)
@@ -147,7 +155,32 @@ func TestLRUCache_EvictionOrder(t *testing.T) {
 	}
 }
 
+func TestLRUCache_GetUpdatesRecency(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](3)
+	c.Set("a", 1)
+	c.Set("b", 2)
+	c.Set("c", 3)
+
+	// Access "a" via Get - should make it most recently used
+	c.Get("a")
+
+	// Add new item - should evict "b" (now the least recently used)
+	c.Set("d", 4)
+
+	if _, ok := c.Get("a"); !ok {
+		t.Error("expected 'a' to still exist after being accessed via Get")
+	}
+
+	if _, ok := c.Get("b"); ok {
+		t.Error("expected 'b' to be evicted (was least recently used)")
+	}
+}
+
 func TestLRUCache_CapacityOne(t *testing.T) {
+	t.Parallel()
+
 	c := lru.New[string, int](1)
 	c.Set("a", 1)
 	c.Set("b", 2)
@@ -162,6 +195,8 @@ func TestLRUCache_CapacityOne(t *testing.T) {
 }
 
 func TestLRUCache_MultipleTypes(t *testing.T) {
+	t.Parallel()
+
 	c := lru.New[int, string](3)
 	c.Set(1, "one")
 	c.Set(2, "two")
@@ -177,5 +212,126 @@ func TestLRUCache_MultipleTypes(t *testing.T) {
 
 	if v, ok := c.Get(3); !ok || v != "three" {
 		t.Errorf("expected 'three', got %v", v)
+	}
+}
+
+func TestLRUCache_ConcurrentWrites(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](100)
+
+	var wg sync.WaitGroup
+
+	numGoroutines := 100
+	numOps := 100
+
+	for i := range numGoroutines {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range numOps {
+				c.Set(id*numOps+j, j)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentReadsAndWrites(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](100)
+
+	// Pre-populate
+	for i := range 50 {
+		c.Set(fmt.Sprintf("key%d", i), i)
+	}
+
+	var wg sync.WaitGroup
+
+	// Writers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Set(fmt.Sprintf("writer%d-key%d", id, j), j)
+			}
+		}(i)
+	}
+
+	// Readers
+	for i := range 10 {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range 100 {
+				c.Get(fmt.Sprintf("writer%d-key%d", id, j))
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentEviction(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[int, int](10) // Small capacity to force evictions
+
+	var wg sync.WaitGroup
+
+	numGoroutines := 50
+	numOps := 100
+
+	for i := range numGoroutines {
+		wg.Add(1)
+
+		go func(id int) {
+			defer wg.Done()
+
+			for j := range numOps {
+				key := id*numOps + j
+				c.Set(key, key)
+				c.Get(key)
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+func TestLRUCache_ConcurrentSameKey(t *testing.T) {
+	t.Parallel()
+
+	c := lru.New[string, int](10)
+
+	var wg sync.WaitGroup
+
+	numGoroutines := 100
+
+	for i := range numGoroutines {
+		wg.Add(1)
+
+		go func(val int) {
+			defer wg.Done()
+
+			c.Set("shared", val)
+			c.Get("shared")
+		}(i)
+	}
+
+	wg.Wait()
+
+	// Verify the key exists with some value
+	if _, ok := c.Get("shared"); !ok {
+		t.Error("expected 'shared' key to exist")
 	}
 }
