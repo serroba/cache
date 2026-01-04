@@ -302,7 +302,7 @@ func (c *Cache[K, V]) promote(n *node[K, V]) {
 // This is only called when protectedLen > protectedCap, so protected is never empty.
 // Note: This cannot cause probation overflow because:
 // - promote() removes 1 from probation and demoteLRU adds 1 back (net zero change)
-// - probationLen never exceeds probationCap after Set() completes
+// - probationLen never exceeds probationCap after Set() completes.
 func (c *Cache[K, V]) demoteLRU() {
 	lru := c.protectedTail.prev
 

@@ -398,4 +398,3 @@ func TestClockCache_EvictAfterDelete(t *testing.T) {
 	c.Set("e", 5)
 	assert.Equal(t, uint64(3), c.Len())
 }
-
