@@ -1,3 +1,4 @@
+// Package lru provides a thread-safe LRU (Least Recently Used) cache implementation.
 package lru
 
 import "sync"
@@ -8,6 +9,9 @@ type node[K comparable, V any] struct {
 	prev, next *node[K, V]
 }
 
+// Cache is a thread-safe LRU cache.
+// It stores key-value pairs and evicts the least recently used items
+// when the capacity is exceeded. All operations are O(1).
 type Cache[K comparable, V any] struct {
 	mu sync.Mutex
 
@@ -16,6 +20,7 @@ type Cache[K comparable, V any] struct {
 	head, tail *node[K, V]
 }
 
+// New creates a new LRU cache with the given capacity.
 func New[K comparable, V any](capacity uint64) *Cache[K, V] {
 	head := &node[K, V]{}
 	tail := &node[K, V]{}
@@ -30,6 +35,9 @@ func New[K comparable, V any](capacity uint64) *Cache[K, V] {
 	}
 }
 
+// Set adds or updates a value in the cache.
+// If the key already exists, its value is updated and it becomes the most recently used.
+// If the cache is at capacity, the least recently used item is evicted.
 func (c *Cache[K, V]) Set(key K, value V) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -68,6 +76,9 @@ func (c *Cache[K, V]) addNodeToHead(node *node[K, V]) {
 	c.head.next = node
 }
 
+// Get retrieves a value from the cache.
+// Returns the value and true if found, or the zero value and false if not found.
+// Accessing a key marks it as the most recently used.
 func (c *Cache[K, V]) Get(key K) (V, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
