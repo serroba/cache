@@ -250,7 +250,7 @@ func TestLRUCache_ConcurrentReadsAndWrites(t *testing.T) {
 			defer wg.Done()
 
 			for j := range 100 {
-				c.Get(fmt.Sprintf("key:%d:%d", id, j%50))
+				c.Get(fmt.Sprintf("writer%d-key%d", id, j))
 			}
 		}(i)
 	}
